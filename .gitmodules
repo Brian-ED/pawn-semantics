@@ -1,0 +1,3 @@
+[submodule "transition-and-trees"]
+	path = transition-and-trees
+	url = git@github.com:Brian-ED/transition-and-trees.git
