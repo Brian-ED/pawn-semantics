@@ -1,4 +1,4 @@
 name: pawn-semantics
 depend: standard-library
 include: .
-  ./transition-and-trees
+  transition-and-trees
