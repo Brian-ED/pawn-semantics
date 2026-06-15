@@ -20,6 +20,7 @@ open import Data.Integer using (ℤ) renaming (+_ to +ℤ_; _+_ to _+ℤ_; _-_ t
 open import Data.String using (String) renaming (length to strLen; _==_ to _==ₛₜᵣ_)
 open import Relation.Binary.PropositionalEquality using (_≡_; cong; refl)
 open import Relation.Unary using (Pred; Decidable)
+open import Relation.Nullary using (yes; no)
 open import TransitionSystems using (TransitionSystem; ⌞_,_,_⌟)
 open import BigAndSmallStepSemantics using (⌈>; BigStepSemantics)
 open import Data.Empty using (⊥)
@@ -31,7 +32,7 @@ open import Data.Product using (_×_; _,_; Σ)
 open import Data.Nat using (ℕ; suc) renaming (_+_ to _+ℕ_)
 open import Data.List using (_∷_; []; length; lookup; updateAt) renaming (List to ListAny)
 open import Data.Float using (Float) renaming (_≡ᵇ_ to _==ᶠ_)
-open import Data.Fin using (Fin; toℕ)
+open import Data.Fin using (Fin; toℕ; fromℕ<)
 open import Data.Vec using (Vec; toList; fromList)
 import State as Dict
 open import Data.Nat using (suc; _^_) renaming (_<_ to _<ₙ_; _<?_ to _<?ₙ_; _≡ᵇ_ to _==ₙ_)
@@ -483,9 +484,14 @@ exprsAsIndecies [] = just []
 exprsAsIndecies (value int nonNeg n ∷ xs) = map (n ∷_) (exprsAsIndecies xs)
 exprsAsIndecies (x ∷ x₁) = nothing
 
-massIndex : ListAny (Fin (2 ^ 63)) → (σ : ListAny Loc) → Maybe (ListAny Loc)
-massIndex [] xs = just []
-massIndex (x ∷ i) xs = {! lookup xs !}
+massIndex : (σ : ListAny Loc) → ListAny (Fin (2 ^ 63)) → Maybe (ListAny Loc)
+massIndex xs [] = just []
+massIndex xs (i ∷ is) with toℕ i <?ₙ length xs
+... | yes p = map ((λ l → (lookup xs (fromℕ< p)) ∷ l)) (massIndex xs is)
+... | no p = nothing
+
+vecLenReplace : {n m : ℕ} → Vec Loc n → n ≡ m → Vec Loc m
+vecLenReplace x refl = x
 
 data ⟨_⟩⇒M⟨_⟩ where
 
@@ -504,15 +510,17 @@ data ⟨_⟩⇒M⟨_⟩ where
                 → {updateAt (e₁ ∷ E) indexOfExpr (λ _ → eᵢ´) ≡ e₁´ ∷ E´}
                 → ⟨ (value ref L₁) [ e₁ , E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ (value ref L₁) [ e₁´ , E´ ]ᵢ , σ′ , l′ , 𝒮′ ⟩
 
-    INDEX-3 :   ∀ {A i j L σ l 𝒮}
-                → lookupₛ σ (locToNat L) ≡ just (list A)
+    INDEX-3 :   ∀ {n locs i j L σ l 𝒮}
+                → lookupₛ σ (locToNat L) ≡ just (list_ {n} locs)
                 → toℕ i ≡ toℕ j
-                → ⟨ (value ref L) [ value int nonNeg i , [] ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ locM Data.Vec.lookup A j , σ , l , 𝒮 ⟩
+                → ⟨ (value ref L) [ value int nonNeg i , [] ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ locM Data.Vec.lookup locs j , σ , l , 𝒮 ⟩
 
-    INDEX-4 :   ∀ {e₁ v locs E L σ l 𝒮}
-                → lookupₛ σ (locToNat L) ≡ just (list locs)
-                → exprsAsIndecies (e₁ ∷ E) ≡ just v
-                → ⟨ (value ref L) [ e₁ , E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ locM l , σ [ locToNat L ↦ₛ list {!  v !} ] , nxt l , 𝒮 ⟩
+    INDEX-4 :   ∀ {e₁ e₂ indecies fromIndexing n m locs E L σ l 𝒮}
+                → lookupₛ σ (locToNat L) ≡ just (list_ {n} locs)
+                → exprsAsIndecies (e₁ ∷ e₂ ∷ E) ≡ just indecies
+                → massIndex (toList locs) indecies ≡ just fromIndexing
+                → (p : length fromIndexing ≡ toℕ m)
+                → ⟨ (value ref L) [ e₁ , e₂ ∷ E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ locM l , σ [ locToNat L ↦ₛ list (vecLenReplace (fromList {A = Loc} fromIndexing) p) ] , nxt l , 𝒮 ⟩
 
     MEMBER-1 :  ∀ {e e´ x σ σ′ l l′ 𝒮 𝒮′}
                 → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ′ , l′ , 𝒮′ ⟩
@@ -526,17 +534,6 @@ data ⟨_⟩⇒M⟨_⟩ where
     VAR :   ∀ {x σ l L 𝒮}
             → ψ x 𝒮 ≡ just L
             → ⟨ name x , σ , l , 𝒮 ⟩⇒M⟨ locM L , σ , l , 𝒮 ⟩
-
---    INDEX-E1 :  ∀ {e₁ e₁' e₂ σ l 𝒮 σ' l' 𝒮'}
---                → ⟨ e₁ , σ , l , 𝒮 ⟩⇒E⟨ e₁' , σ' , l' , 𝒮' ⟩
---                → ⟨ inj₁ (e₁ [ e₂ ]ₘ) , σ , l , 𝒮 ⟩⇒M⟨ inj₁ (e₁' [ e₂ ]ₘ) , σ' , l' , 𝒮' ⟩
---
---    INDEX-E2 :  ∀ {v e e' σ l 𝒮 σ' l' 𝒮'}
---                → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e' , σ' , l' , 𝒮' ⟩
---                → ⟨ inj₁ (v [ e ]ₘ) , σ , l , 𝒮 ⟩⇒M⟨ inj₁ (v [ e' ]ₘ) , σ' , l' , 𝒮' ⟩
-
---    INDEX : ∀ {v i L σ l 𝒮 σ' l' 𝒮'}
---            → ⟨ inj₁ ((inj₂ {!   !}) [ inj₂ (int i) ]) , σ , l , 𝒮 ⟩⇒M⟨ inj₂ L , σ' , l' , 𝒮' ⟩
 
 
 -- Examples
