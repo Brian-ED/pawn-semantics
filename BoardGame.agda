@@ -26,21 +26,20 @@ open import BigAndSmallStepSemantics using (⌈>; BigStepSemantics)
 open import Data.Empty using (⊥)
 open import Data.Unit using (⊤) renaming (tt to ttt)
 open import Relation.Nullary.Negation using (¬_)
-open import Data.Maybe using (Maybe; _>>=_; map; just; nothing)
+open import Data.Maybe using (Maybe; _>>=_; map; zipWith; nothing) renaming (just to just_)
 open import Data.Sum using (_⊎_) renaming (inj₁ to inj₁_; inj₂ to inj₂_)
-open import Data.Product using (_×_; _,_; Σ)
+open import Data.Product using (_×_; _,_; Σ; ∃; proj₁; proj₂)
 open import Data.Nat using (ℕ; suc) renaming (_+_ to _+ℕ_)
 open import Data.List using (_∷_; []; length; lookup; updateAt) renaming (List to ListAny)
 open import Data.Float using (Float) renaming (_≡ᵇ_ to _==ᶠ_)
-open import Data.Fin using (Fin; toℕ; fromℕ<)
+open import Data.Fin using (Fin; toℕ; fromℕ; fromℕ<; inject; inject≤)
 open import Data.Vec using (Vec; toList; fromList)
 import State as Dict
-open import Data.Nat using (suc; _^_) renaming (_<_ to _<ₙ_; _<?_ to _<?ₙ_; _≡ᵇ_ to _==ₙ_)
+open import Data.Nat using (suc; _^_; s<s; z≤n; s≤s; z<s) renaming (_<_ to _<ₙ_; _≤_ to _≤ₙ_; _<?_ to _<?ₙ_; _≡ᵇ_ to _==ₙ_)
 open import Data.Bool using (_∨_)
 
 data 𝕍 : Set
 data Stmt : Set
-data PosArgDecl : Set
 data NamedArg : Set
 data Expr : Set
 data Member : Set
@@ -86,6 +85,8 @@ module locNatEquivalence where
 
 open locNatEquivalence using (locToNat; locFromNat)
 
+PosArgDecl = ListAny Var
+
 open Dict 𝕍 ℕ _<ₙ_ _<?ₙ_ _==ₙ_ using (_⊢_==ₛ_) renaming
     (_[_↦_]     to _[_↦ₛ_]
     ;lookup     to lookupₛ
@@ -94,6 +95,7 @@ open Dict 𝕍 ℕ _<ₙ_ _<?ₙ_ _==ₙ_ using (_⊢_==ₛ_) renaming
     ;sortedNil  to sortedNilₛ
     ;sortedCons to sortedConsₛ
     ;sortedOne  to sortedOneₛ
+    ;joinOverwrite to joinObjOverwrite
     )
 
 open Dict Loc Var _<ₛ_ _<?ₛ_ _==ₛ_ using () renaming
@@ -213,13 +215,9 @@ data Expr where
     stackframe : (𝒮  : Stack) → (S : Stmt) → Expr
     value_     : (v  : 𝕍) → Expr
 
-data PosArgDecl where
-    arg_ : (x : Var) → PosArgDecl
-    _,arg_ : (x : Var) → (P : PosArgDecl) → PosArgDecl
-
 data NamedArg where
     ε : NamedArg
-    _←_,O_ : (x : Var) → (e : Expr) → (O : NamedArg) → NamedArg
+    _←O_,O_ : (x : Var) → (e : Expr) → (O : NamedArg) → NamedArg
 
 data Member where
     name_ : (x : Var) → Member
@@ -253,9 +251,11 @@ data ⟨_⟩⇒Eₐ⟨_⟩ : Γₑ → Γₑ → Set
 Γₛ₂ = Store × Loc × ListAny Var⇀Loc
 
 data Γₛ : Set where
-    ₛ₁ : Γₛ₁ → Γₛ
-    final : Γₛ₂ → Γₛ
+    ₛ₁_ : Γₛ₁ → Γₛ
+    final_ : Γₛ₂ → Γₛ
 
+infix 1 ₛ₁_
+infix 1 final_
 
 data ⟨_⟩⇒Sₐ⟨_⟩ : (IN : Γₛ) → (OUT : Γₛ) → Set
 
@@ -331,97 +331,138 @@ func primFunction _ 𝕍== _ = bool ff
 --x₁ [ ⊕··= ]ₐ x₂ = x₁
 --x₁ [ ⊕··  ]ₐ x₂ = x₁
 
+variable
+    e e´ e˝ e₁ e₁´ e₂ eᵢ eᵢ´ : Expr
+    S S´ S₁ S₁´ S₂ S₂´ : Stmt
+    m m´ : Member
+    σ σ´ σ˝ : Store
+    l l´ l˝ L : Loc
+    ℰ ℰ´ : Var⇀Loc
+    𝒮 𝒮´ 𝒮˝ 𝒮ₛ : Stack
+    x N : Var
+    xₙ : PosArgDecl
+    v : 𝕍
+    xₒ=eₒ : NamedArg
+    E E´ : ExprList
+
 data ⟨_⟩⇒Eₐ⟨_⟩ where
 --    OP :    ∀ {v₁ v₂ σ l 𝒮}
 --            → (⊕ : OpType)
 --            → ⟨(inj₁ ((getOp ⊕) (inj₂ v₁) (inj₂ v₂))) , σ , l , 𝒮 ⟩⇒E⟨ (inj₂ (v₁ [ ⊕ ]ₐ v₂)) , σ , l , 𝒮 ⟩
 
+split : NamedArg → (Σ ℕ λ n → Vec Var n × Vec Expr n)
+split ε = 0 , Vec.[] , Vec.[]
+split (n ←O e ,O x₁) with split x₁
+... | l , names , exprs = suc l , n Vec.∷ names , e Vec.∷ exprs
+
+
+--locsToObject : Store → ListAny Loc → Maybe (ListAny Store)
+--locsToObject _ [] = just []
+--locsToObject σ (L ∷ locs) with lookupₛ σ (locToNat L)
+--... | just obj x = map ({! x !} ∷_) (locsToObject σ locs)
+--... | _ = {!   !}
+
+APPLY-4-algo : Store → ListAny Loc → Σ ℕ (λ n → Vec Var n × Vec Loc n) → Maybe Store
+APPLY-4-algo σ [] _ = just σ
+APPLY-4-algo σ (L₁ ∷ Lₘ) (n , Nₙ , vₑₙ) with lookupₛ σ (locToNat L₁)
+... | nothing = nothing
+... | just obj o = APPLY-4-algo (σ [ locToNat L₁ ↦ₛ obj Data.Vec.foldl′ {! λ x (y , z) → x [ y ↦ₛ z ]  !} o (Data.Vec.zip {!   !} {!   !}) ]) Lₘ (n , Nₙ , vₑₙ)
+    where
+        innerLoop : Var⇀Loc → Σ ℕ (λ n → Vec Var n × Vec Loc n) → Var⇀Loc
+        innerLoop O (0 , _) = O
+        innerLoop O (suc n , N₁ Vec.∷ Nₙ , Lₑ₁ Vec.∷ vₑₙ) = innerLoop (O [ N₁ ↦ₑ Lₑ₁ ]) (n , Nₙ , vₑₙ)
+... | just v = nothing
+
+--APPLY-4-algo σ Lₘ (0 , _) = just []
+--APPLY-4-algo σ Lₘ (suc n , N₁ Vec.∷ Nₙ , ref Lₑ₁ Vec.∷ vₑₙ) = {! σ [ ? ↦ₛ ? ] !}
+--APPLY-4-algo σ Lₘ (suc n , N₁ Vec.∷ Nₙ , vₑ₁ Vec.∷ vₑₙ) = nothing
+
 data ⟨_⟩⇒Sₐ⟨_⟩ where
 
---    IF-E :  ∀ {S₁ S₂ e e' σ σ' l l' 𝒮 }
---            → ⟨    e                 , σ , l , 𝒮 ⟩⇒E⟨    e'                 , σ' , l' , 𝒮 ⟩
---            → ⟨ if e then S₁ else S₂ , σ , l , 𝒮 ⟩⇒S⟨ if e' then S₁ else S₂ , σ' , l' , 𝒮 ⟩
+    FN-DECL :   ⟨ ₛ₁ fn x ⟨ xₙ , xₒ=eₒ ⟩ S , σ , l , ℰ ∷ 𝒮 ⟩⇒Sₐ⟨
+                    final σ [ locToNat l ↦ₛ ref nxt l ] [
+                        locToNat (nxt l) ↦ₛ func (userFunction (ℰ [ x ↦ₑ l ] ∷ 𝒮 , xₙ , split xₒ=eₒ , S))
+                    ] , nxt nxt l , ℰ [ x ↦ₑ l ] ∷ 𝒮
+                ⟩
 
---    IF-T :  ∀ {S₁ S₂ σ l 𝒮}
---            → ⟨ if (inj₂ (bool tt)) then S₁ else S₂ , σ , l , 𝒮 ⟩⇒S⟨ ⟨ S₁ ⟩ , σ , l , 𝒮 ⟩
---
---    IF-F :  ∀ {S₁ S₂ σ l 𝒮}
---            → ⟨ if (inj₂ (bool ff)) then S₁ else S₂ , σ , l , 𝒮 ⟩⇒S⟨ ⟨ S₂ ⟩ , σ , l , 𝒮 ⟩
---
---    BLOCK-S :   ∀ {S S' σ σ' l l' 𝒮 𝒮' }
---                → ⟨ S , σ , l , 𝒮 ⟩⇒S⟨ S' , σ' , l' , 𝒮' ⟩
---                → ⟨ ⟨ S ⟩ , σ , l , 𝒮 ⟩⇒S⟨ ⟨ S' ⟩ , σ' , l' , 𝒮' ⟩
---
---    BLOCK : ∀ {S σ σ' l l' 𝒮 𝒮' ℰ }
---            → ⟨ inj₁ (S , σ , l , (ℰ ∷ 𝒮)) ⟩⇒Sₐ⟨ inj₂(σ' , l' , 𝒮') ⟩
---            → ⟨ inj₁ ( ⟨ S ⟩ , σ , l , (ℰ ∷ 𝒮) ) ⟩⇒Sₐ⟨ inj₂ (σ' , l' , 𝒮) ⟩
---
---    SKIP :  ∀ {σ l ℰ}
---            → ⟨ inj₁ (skip , σ , l , ℰ) ⟩⇒Sₐ⟨ inj₂ (σ , l , ℰ) ⟩
---
---    ASS-E : ∀ {m e e' σ σ' l l' 𝒮 𝒮' }
---            → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e' , σ' , l' , 𝒮' ⟩
---            → ⟨ m ← e , σ , l , 𝒮 ⟩⇒S⟨ m ← e' , σ' , l' , 𝒮' ⟩
---
---    ASS-M : ∀ {m m' v σ σ' l l' 𝒮 𝒮' ℰ}
---            → ⟨ m , σ , l , 𝒮 ⟩⇒M⟨ m' , σ' , l' , 𝒮' ⟩
---            → ⟨ m ← (inj₂ v) , σ , l , (ℰ ∷ 𝒮) ⟩⇒S⟨ m' ← (inj₂ v) , σ' , l' , 𝒮' ⟩
---
---    -- TODO
---    ASS   : ∀ {m v σ σ' l 𝒮 ℰ ℰ' }
---            → σ' ≡ σ [ m ↦ₛ v ]
---            → ⟨ inj₁( (inj₂ m) ← (inj₂ v) , σ , l , (ℰ ∷ 𝒮)) ⟩⇒Sₐ⟨ inj₂(σ' , nxt l , (ℰ' ∷ 𝒮))⟩
---
---    WHILE : ∀ {e S σ l 𝒮}
---            → ⟨ while e dø S , σ , l , 𝒮 ⟩⇒S⟨ if e then while e dø S else skip , σ , l , 𝒮 ⟩
---
---    COMP-S1 :   ∀ {S₁ S₁´ S₂ σ σ' l l' 𝒮 𝒮'}
---                → ⟨ S₁      , σ , l , 𝒮 ⟩⇒S⟨ S₁´      , σ' , l' , 𝒮' ⟩
---                → ⟨ S₁ ⍮ S₂ , σ , l , 𝒮 ⟩⇒S⟨ S₁´ ⍮ S₂ , σ' , l' , 𝒮' ⟩
---
---    COMP :  ∀ {S₁ S₂ σ σ' l l' 𝒮 𝒮'}
---            → ⟨ inj₁ (S₁ , σ , l , 𝒮) ⟩⇒Sₐ⟨ inj₂(σ' , l' , 𝒮') ⟩
---            → ⟨ S₁ ⍮ S₂ , σ , l , 𝒮 ⟩⇒S⟨ S₂ , σ' , l' , 𝒮' ⟩
+    RETURN :    ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ return e , σ , l , 𝒮 ⟩⇒S⟨ return e´ , σ´ , l´ , 𝒮´ ⟩
 
---    ASS-E1 :    ∀ { e₁ e₁' e₂ l l' ℰ ℰₗ σ σ'}
---                → ℰ ⊢⟨ e₁ , σ , l ⟩⇒E⟨ e₁' , σ' , l' ⟩
---                → ⟨ inj₁ (e₂ ← e₁) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₁ (e₂ ← e₁') , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    ASS-E2 :    ∀ { v e₂ e₂' l l' ℰ ℰₗ σ σ'}
---                → ℰ ⊢⟨ e₂ , σ , l ⟩⇒E⟨ e₂' , σ' , l' ⟩
---                → ⟨ inj₁ (e₂ ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₁ (e₂' ← (inj₂ v)) , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    ASS-DEREF-E :   ∀ {n e v l l' ℰ ℰₗ ℰ' σ σ'}
---                    → ℰ ⊢⟨ inj₁ e , {! ℰ  !} , {!   !} ⟩⇒E⟨ {!   !} , {!   !} ⟩
---                    → ⟨ inj₁ ((inj₁ deref e n) ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ emptyObj , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    ASS-DEREF : ∀ {n e v l l' ℰ ℰₗ ℰ' σ σ'}
---                → ℰ ⊢⟨ {!   !} , {!   !} ⟩⇒E⟨ {!   !} , {!   !} ⟩
---                → lookupₑ ℰ n ≡ just l
---                → σ' ≡ (σ' [ {!   !} ↦ₛ {!   !} ])
---                → ⟨ inj₁ ((inj₁ deref {!   !} n) ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ emptyObj , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    ASS-NAME :  ∀ {n v l ℰ ℰₗ σ any}
---                → lookupₑ ℰ n ≡ just any
---                → ⟨ inj₁ ((inj₁ (X n)) ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ emptyObj , σ [ l ↦ₛ v ] , suc l , (ℰ [ n ↦ₑ l ]) ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---
---    ASS-LIST-E1 :  ∀ {x e v l l' ℰ ℰₗ ℰ' σ σ'}
---                → ℰ ⊢⟨ {! inj₁_  !} , {!   !} ⟩⇒E⟨ {!   !} , {!   !} ⟩
---                → lookupₑ ℰ' x ≡ just l
---                → σ' ≡ (σ' [ {!   !} ↦ₛ {!   !} ])
---                → ⟨ inj₁ ((inj₁ ({! e  !} [ {!   !} ])) ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ emptyObj , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    ASS-LIST-E2 :  ∀ {x e v l l' ℰ ℰₗ ℰ' σ σ'}
---                → ℰ ⊢⟨ {! inj₁_  !} , {!   !} ⟩⇒E⟨ {!   !} , {!   !} ⟩
---                → ⟨ inj₁ ((inj₁ ({! e  !} [ {!   !} ])) ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ emptyObj , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    ASS-LIST :  ∀ {x e v l l' ℰ ℰₗ ℰ' σ σ'}
---                → ℰ ⊢⟨ {! inj₁_  !} , {!   !} ⟩⇒E⟨ {!   !} , {!   !} ⟩
---                → lookupₑ ℰ' x ≡ just l
---                → σ' ≡ (σ' [ {!   !} ↦ₛ {!   !} ])
---                → ⟨ inj₁ ((inj₁ ({! e  !} [ {!   !} ])) ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ emptyObj , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
+    COMP-1 :    ⟨ S₁      , σ , l , 𝒮 ⟩⇒S⟨ S₁´      , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ S₁ ⍮ S₂ , σ , l , 𝒮 ⟩⇒S⟨ S₁´ ⍮ S₂ , σ´ , l´ , 𝒮´ ⟩
+
+    COMP-2 :    ⟨ ₛ₁ S₁ , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ S₁ ⍮ S₂ , σ , l , 𝒮 ⟩⇒S⟨ S₂ , σ´ , l´ , 𝒮´ ⟩
+
+    COMP-3 : ⟨ return value v ⍮ S₂ , σ , l , 𝒮 ⟩⇒S⟨ return value v , σ´ , l´ , 𝒮´ ⟩
+
+    COMP-4 : ⟨ return· ⍮ S₂ , σ , l , 𝒮 ⟩⇒S⟨ return· , σ , l , 𝒮 ⟩
+
+    SKIP : ⟨ ₛ₁ skip , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ , l , 𝒮 ⟩
+
+    BLOCK-1 :   ⟨   S   , σ , l , 𝒮 ⟩⇒S⟨   S´   , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ ⟨ S ⟩ , σ , l , 𝒮 ⟩⇒S⟨ ⟨ S´ ⟩ , σ´ , l´ , 𝒮´ ⟩
+
+    BLOCK-2 :   ⟨ ₛ₁   S   , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , ℰ´ ∷ 𝒮´ ⟩ →
+                ⟨ ₛ₁ ⟨ S ⟩ , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ ,      𝒮´ ⟩
+
+    BLOCK-3 : ⟨ ⟨ return value v ⟩ , σ , l , ℰ ∷ 𝒮 ⟩⇒S⟨ return value v , σ , l , 𝒮 ⟩
+
+    BLOCK-4 : ⟨ ⟨ return· ⟩ , σ , l , ℰ ∷ 𝒮 ⟩⇒S⟨ return· , σ , l , 𝒮 ⟩
+
+    IF-COND :   ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ if e then S₁ else S₂ , σ , l , 𝒮 ⟩⇒S⟨ if e´ then S₁ else S₂ , σ´ , l´ , 𝒮´ ⟩
+
+    IF-TRUE : ⟨ if value bool tt then S₁ else S₂ , σ , l , 𝒮 ⟩⇒S⟨ ⟨ S₁ ⟩ , σ , l , Æ ∷ 𝒮 ⟩
+
+    IF-FALSE : ⟨ if value bool ff then S₁ else S₂ , σ , l , 𝒮 ⟩⇒S⟨ ⟨ S₂ ⟩ , σ , l , Æ ∷ 𝒮 ⟩
+
+    WHILE : ⟨ while e dø S , σ , l , 𝒮 ⟩⇒S⟨
+                if e then
+                    if value bool tt then S else skip ⍮
+                    while e dø S
+                else skip , σ , l , 𝒮
+            ⟩
+
+    ASSIGN-1 :  ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ m ← e , σ , l , 𝒮 ⟩⇒S⟨ m ← e´ , σ´ , l´ , 𝒮´ ⟩
+
+    ASSIGN-2 :  ⟨ m , σ , l , 𝒮 ⟩⇒M⟨ m´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ m ← value v , σ , l , 𝒮 ⟩⇒S⟨ m´ ← value v , σ´ , l´ , 𝒮´ ⟩
+
+    ASSIGN-3 : ⟨ ₛ₁ locM L ← value v , σ , l , 𝒮 ⟩⇒Sₐ⟨ final (σ [ locToNat L ↦ₛ v ]) , l , 𝒮 ⟩
+
+    ASSIGN-4 :  ψ x (ℰ ∷ 𝒮) ≡ nothing →
+                ⟨ ₛ₁ name x ← value v , σ , l , ℰ ∷ 𝒮 ⟩⇒Sₐ⟨ final σ [ locToNat l ↦ₛ v ] , nxt l , ℰ [ x ↦ₑ l ] ∷ 𝒮 ⟩
+
+    EXPR-STMT-1 :   ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+                    ⟨ expr e , σ , l , 𝒮 ⟩⇒S⟨ expr e´ , σ´ , l´ , 𝒮´ ⟩
+
+    EXPR-STMT-2 : ⟨ ₛ₁ expr value v , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ , l , 𝒮 ⟩
+
+    EXPR-STMT-3 : ⟨ ₛ₁ expr stackframe 𝒮ₛ return· , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ , l , 𝒮ₛ ⟩
+
+    APPLY-1 :   ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ e´ , σ´ , l´ , 𝒮´ ⟩⇒E⟨ e˝ , σ˝ , l˝ , 𝒮˝ ⟩ →
+                ⟨ apply e dø S , σ , l , 𝒮 ⟩⇒S⟨ apply e´ dø S , σ´ , l´ , 𝒮´ ⟩
+
+    APPLY-2 :   ∀ {n locs}
+                → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ value ref L , σ´ , l´ , 𝒮´ ⟩
+                → lookupₛ σ´ (locToNat L) ≡ just list_ {n} locs
+                → ((i : Fin (toℕ n)) → ∃ λ (o : Var⇀Loc) → lookupₛ σ´ (locToNat (Data.Vec.lookup locs i)) ≡ just obj o)
+                → ⟨ apply e dø S , σ , l , 𝒮 ⟩⇒S⟨ apply value list_ {n} locs dø S , σ´ , l´ , Æ ∷ 𝒮´ ⟩
+
+    APPLY-3 :   ∀ {n locs}
+                → ⟨ S , σ , l , 𝒮 ⟩⇒S⟨ S´ , σ´ , l´ , 𝒮´ ⟩
+                → ((i : Fin (toℕ n)) → ∃ λ (o : Var⇀Loc) → lookupₛ σ´ (locToNat (Data.Vec.lookup locs i)) ≡ just obj o)
+                → ⟨ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒S⟨ apply value list_ {n} locs dø S´ , σ´ , l´ , 𝒮´ ⟩
+
+    APPLY-4 :   ∀ {n locs objs}
+                → ⟨ ₛ₁ S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , ℰ´ ∷ 𝒮´ ⟩
+                → ((i : Fin (toℕ n)) → ∃ λ (o : Var⇀Loc) → lookupₛ σ´ (locToNat (Data.Vec.lookup locs i)) ≡ just obj o)
+                --→ locsToObject σ´ (toList locs) ≡ just objs
+                → ⟨ ₛ₁ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final Data.List.foldl joinObjOverwrite σ´ objs , l´ , 𝒮´ ⟩
+
 --    DEF-E : ∀ {x e e' l l' ℰ ℰₗ σ σ'}
 --            → ℰ ⊢⟨ e , σ , l ⟩⇒E⟨ e' , σ' , l' ⟩
 --            → ⟨ inj₁ (x ← e) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₁ (x ← e') , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
@@ -495,45 +536,34 @@ vecLenReplace x refl = x
 
 data ⟨_⟩⇒M⟨_⟩ where
 
---name_ :
---_deref_
---_[_,_]ₘ
---locM_ :
+    INDEX-1 :   ⟨ e₁ , σ , l , 𝒮 ⟩⇒E⟨ e₁´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ e₁ [ e₂ , E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ e₁´ [ e₂ , E ]ᵢ , σ´ , l´ , 𝒮´ ⟩
 
-    INDEX-1 :   ∀ {e₁ e₂ E e₁´ σ σ′ l l′ 𝒮 𝒮′}
-                → ⟨ e₁ , σ , l , 𝒮 ⟩⇒E⟨ e₁´ , σ′ , l′ , 𝒮′ ⟩
-                → ⟨ e₁ [ e₂ , E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ e₁´ [ e₂ , E ]ᵢ , σ′ , l′ , 𝒮′ ⟩
-
-    INDEX-2 :   ∀ {E E´ e₁ e₁´ eᵢ´ indexOfExpr L₁ σ σ′ l l′ 𝒮 𝒮′}
+    INDEX-2 :   ∀ {indexOfExpr}
                 → minIndexNonInt (fromList (e₁ ∷ E)) ≡ just indexOfExpr
-                → ⟨ lookup (e₁ ∷ E) indexOfExpr , σ , l , 𝒮 ⟩⇒E⟨ eᵢ´ , σ′ , l′ , 𝒮′ ⟩
+                → ⟨ lookup (e₁ ∷ E) indexOfExpr , σ , l , 𝒮 ⟩⇒E⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩
                 → {updateAt (e₁ ∷ E) indexOfExpr (λ _ → eᵢ´) ≡ e₁´ ∷ E´}
-                → ⟨ (value ref L₁) [ e₁ , E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ (value ref L₁) [ e₁´ , E´ ]ᵢ , σ′ , l′ , 𝒮′ ⟩
+                → ⟨ (value ref L) [ e₁ , E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ (value ref L) [ e₁´ , E´ ]ᵢ , σ´ , l´ , 𝒮´ ⟩
 
-    INDEX-3 :   ∀ {n locs i j L σ l 𝒮}
+    INDEX-3 :   ∀ {n locs i j}
                 → lookupₛ σ (locToNat L) ≡ just (list_ {n} locs)
                 → toℕ i ≡ toℕ j
                 → ⟨ (value ref L) [ value int nonNeg i , [] ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ locM Data.Vec.lookup locs j , σ , l , 𝒮 ⟩
 
-    INDEX-4 :   ∀ {e₁ e₂ indecies fromIndexing n m locs E L σ l 𝒮}
+    INDEX-4 :   ∀ {indecies fromIndexing n m locs}
                 → lookupₛ σ (locToNat L) ≡ just (list_ {n} locs)
                 → exprsAsIndecies (e₁ ∷ e₂ ∷ E) ≡ just indecies
                 → massIndex (toList locs) indecies ≡ just fromIndexing
                 → (p : length fromIndexing ≡ toℕ m)
                 → ⟨ (value ref L) [ e₁ , e₂ ∷ E ]ᵢ , σ , l , 𝒮 ⟩⇒M⟨ locM l , σ [ locToNat L ↦ₛ list (vecLenReplace (fromList {A = Loc} fromIndexing) p) ] , nxt l , 𝒮 ⟩
 
-    MEMBER-1 :  ∀ {e e´ x σ σ′ l l′ 𝒮 𝒮′}
-                → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ′ , l′ , 𝒮′ ⟩
-                → ⟨ e deref x , σ , l , 𝒮 ⟩⇒M⟨ e´ deref x , σ′ , l′ , 𝒮′ ⟩
+    MEMBER-1 :  ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+                ⟨ e deref x , σ , l , 𝒮 ⟩⇒M⟨ e´ deref x , σ´ , l´ , 𝒮´ ⟩
 
-    MEMBER-2 :  ∀ {O x σ l L 𝒮}
+    MEMBER-2 :  ∀ {O}
                 → lookupₛ σ (locToNat L) ≡ just (obj O)
                 → lookupₑ O x ≡ just L
                 → ⟨ (value (ref L)) deref x , σ , l , 𝒮 ⟩⇒M⟨ locM L , σ , l , 𝒮 ⟩
-
-    VAR :   ∀ {x σ l L 𝒮}
-            → ψ x 𝒮 ≡ just L
-            → ⟨ name x , σ , l , 𝒮 ⟩⇒M⟨ locM L , σ , l , 𝒮 ⟩
 
 
 -- Examples
