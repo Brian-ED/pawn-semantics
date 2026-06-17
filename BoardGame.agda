@@ -26,14 +26,15 @@ open import BigAndSmallStepSemantics using (⌈>; BigStepSemantics)
 open import Data.Empty using (⊥)
 open import Data.Unit using (⊤) renaming (tt to ttt)
 open import Relation.Nullary.Negation using (¬_)
-open import Data.Maybe using (Maybe; _>>=_; map; zipWith; nothing) renaming (just to just_)
+open import Data.Maybe using (Maybe; _>>=_; map; nothing) renaming (just to just_)
 open import Data.Sum using (_⊎_) renaming (inj₁ to inj₁_; inj₂ to inj₂_)
-open import Data.Product using (_×_; _,_; Σ; ∃; proj₁; proj₂)
+open import Data.Product using (_×_; _,_; Σ; ∃; proj₁; proj₂; uncurry)
 open import Data.Nat using (ℕ; suc) renaming (_+_ to _+ℕ_)
 open import Data.List using (_∷_; []; length; lookup; updateAt) renaming (List to ListAny)
 open import Data.Float using (Float) renaming (_≡ᵇ_ to _==ᶠ_)
 open import Data.Fin using (Fin; toℕ; fromℕ; fromℕ<; inject; inject≤)
-open import Data.Vec using (Vec; toList; fromList)
+open import Data.Vec using (Vec; unzipWith; unzip; toList; fromList)
+open import Function as Func using (_∘_)
 import State as Dict
 open import Data.Nat using (suc; _^_; s<s; z≤n; s≤s; z<s) renaming (_<_ to _<ₙ_; _≤_ to _≤ₙ_; _<?_ to _<?ₙ_; _≡ᵇ_ to _==ₙ_)
 open import Data.Bool using (_∨_)
@@ -362,20 +363,16 @@ split (n ←O e ,O x₁) with split x₁
 --... | just obj x = map ({! x !} ∷_) (locsToObject σ locs)
 --... | _ = {!   !}
 
+
+breakEnv : Var⇀Loc → Σ ℕ (λ n → Vec Var n × Vec Loc n)
+breakEnv (fst , _) = length fst , unzip (fromList fst)
+
 APPLY-4-algo : Store → ListAny Loc → Σ ℕ (λ n → Vec Var n × Vec Loc n) → Maybe Store
 APPLY-4-algo σ [] _ = just σ
 APPLY-4-algo σ (L₁ ∷ Lₘ) (n , Nₙ , vₑₙ) with lookupₛ σ (locToNat L₁)
 ... | nothing = nothing
-... | just obj o = APPLY-4-algo (σ [ locToNat L₁ ↦ₛ obj Data.Vec.foldl′ {! λ x (y , z) → x [ y ↦ₛ z ]  !} o (Data.Vec.zip {!   !} {!   !}) ]) Lₘ (n , Nₙ , vₑₙ)
-    where
-        innerLoop : Var⇀Loc → Σ ℕ (λ n → Vec Var n × Vec Loc n) → Var⇀Loc
-        innerLoop O (0 , _) = O
-        innerLoop O (suc n , N₁ Vec.∷ Nₙ , Lₑ₁ Vec.∷ vₑₙ) = innerLoop (O [ N₁ ↦ₑ Lₑ₁ ]) (n , Nₙ , vₑₙ)
+... | just obj o = APPLY-4-algo (σ [ locToNat L₁ ↦ₛ obj Data.Vec.foldl′ (uncurry ∘ _[_↦ₑ_]) o (Data.Vec.zip Nₙ vₑₙ) ]) Lₘ (n , Nₙ , vₑₙ)
 ... | just v = nothing
-
---APPLY-4-algo σ Lₘ (0 , _) = just []
---APPLY-4-algo σ Lₘ (suc n , N₁ Vec.∷ Nₙ , ref Lₑ₁ Vec.∷ vₑₙ) = {! σ [ ? ↦ₛ ? ] !}
---APPLY-4-algo σ Lₘ (suc n , N₁ Vec.∷ Nₙ , vₑ₁ Vec.∷ vₑₙ) = nothing
 
 data ⟨_⟩⇒Sₐ⟨_⟩ where
 
@@ -457,11 +454,11 @@ data ⟨_⟩⇒Sₐ⟨_⟩ where
                 → ((i : Fin (toℕ n)) → ∃ λ (o : Var⇀Loc) → lookupₛ σ´ (locToNat (Data.Vec.lookup locs i)) ≡ just obj o)
                 → ⟨ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒S⟨ apply value list_ {n} locs dø S´ , σ´ , l´ , 𝒮´ ⟩
 
-    APPLY-4 :   ∀ {n locs objs}
+    APPLY-4 :   ∀ {n locs}
                 → ⟨ ₛ₁ S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , ℰ´ ∷ 𝒮´ ⟩
                 → ((i : Fin (toℕ n)) → ∃ λ (o : Var⇀Loc) → lookupₛ σ´ (locToNat (Data.Vec.lookup locs i)) ≡ just obj o)
-                --→ locsToObject σ´ (toList locs) ≡ just objs
-                → ⟨ ₛ₁ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final Data.List.foldl joinObjOverwrite σ´ objs , l´ , 𝒮´ ⟩
+                → APPLY-4-algo σ (toList locs) (breakEnv ℰ´) ≡ just σ´
+                → ⟨ ₛ₁ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , 𝒮´ ⟩
 
 --    DEF-E : ∀ {x e e' l l' ℰ ℰₗ σ σ'}
 --            → ℰ ⊢⟨ e , σ , l ⟩⇒E⟨ e' , σ' , l' ⟩
