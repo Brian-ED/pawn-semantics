@@ -460,6 +460,12 @@ data ⟨_⟩⇒Sₐ⟨_⟩ where
                 → APPLY-4-algo σ (toList locs) (breakEnv ℰ´) ≡ just σ´
                 → ⟨ ₛ₁ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , 𝒮´ ⟩
 
+    APPLY-5 :   ∀ {n locs}
+                → ⟨ apply value list_ {n} locs dø return value v , σ , l , 𝒮 ⟩⇒S⟨ return value v , σ´ , l´ , 𝒮´ ⟩
+
+    APPLY-6 :   ∀ {n locs}
+                → ⟨ apply value list_ {n} locs dø return· , σ , l , 𝒮 ⟩⇒S⟨ return· , σ´ , l´ , 𝒮´ ⟩
+
 
 -- minimum index that is not a number
 minIndexNonInt : ∀ {n} → Vec Expr (suc n) → Maybe (Fin (suc n))
