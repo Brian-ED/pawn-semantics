@@ -460,56 +460,6 @@ data ⟨_⟩⇒Sₐ⟨_⟩ where
                 → APPLY-4-algo σ (toList locs) (breakEnv ℰ´) ≡ just σ´
                 → ⟨ ₛ₁ apply value list_ {n} locs dø S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , 𝒮´ ⟩
 
---    DEF-E : ∀ {x e e' l l' ℰ ℰₗ σ σ'}
---            → ℰ ⊢⟨ e , σ , l ⟩⇒E⟨ e' , σ' , l' ⟩
---            → ⟨ inj₁ (x ← e) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₁ (x ← e') , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    DEF :   ∀ {x v l l' ℰ ℰₗ σ σ'}
---            → ⟨ inj₁ (x ← (inj₂ v)) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₂ (emptyObj [ x ↦ v ]) , σ' , l' , ℰ ∷ ℰₗ ⟩ -- (ℰ´ , (σ´ [ l ↦ₛ v ]))
---
---    WHILE : ∀ {e S σ l ℰ}
---            → ⟨ inj₁ while e dø S , σ , l , ℰ  ⟩⇒S⟨ inj₁ if inj₁ e then while e dø S else skip , σ , l , ℰ ⟩
---
---    APPLY-E : ∀ {e e' n σ σ' l l' ℰ ℰₗ}
---            → ℰ ⊢⟨ inj₁ e , σ , l ⟩⇒E⟨ e' , σ' , l' ⟩
---            → ⟨ inj₁ apply (inj₁ e) (inj₂ n) , σ , l , ℰ ∷ ℰₗ ⟩⇒S⟨ inj₁ apply e' (inj₂ n) , σ' , l ,  ℰ ∷ ℰₗ ⟩
---
---    APPLY-S :   ∀ {S S' Lₒ σ σ' l l' ℰ ℰ'}
---                → ⟨ S , σ , l , ℰ ⟩⇒S⟨ S' , σ' , l' , ℰ' ⟩
---                → ⟨ inj₁ apply (inj₂ Lₒ) S , σ , l , ℰ ⟩⇒S⟨ inj₁ apply (inj₂ Lₒ) S' , σ' , l' , ℰ' ⟩
---
---    APPLY : ∀ {Lₒ o n σ σ' l ℰ}
---            → just (object o) ≡ lookupₛ σ Lₒ
---            → σ' ≡ σ [ Lₒ ↦ₛ object (joinOverwrite o n) ]
---            → ⟨ inj₁ apply (inj₂ ref Lₒ) (inj₂ n) , σ , l , ℰ ⟩⇒S⟨ inj₂ emptyObj , σ' , l , ℰ ⟩
---
---    IF-T-S :    ∀ {S₁' S₁ S₂ σ σ' l l' ℰ ℰ'}
---                → ⟨                       inj₁ S₁          , σ , l , ℰ ⟩⇒S⟨ inj₁ S₁' , σ' , l' , ℰ' ⟩
---                → ⟨ inj₁ (if inj₂ bool tt then S₁ else S₂) , σ , l , ℰ ⟩⇒S⟨ inj₁ S₁  , σ' , l' , ℰ  ⟩
-
---    IF-F :  ∀ {s s´ e S₁ S₂ l}
---            → (isExpFalse : l ⟨ inj₁ (e , s) ⟩⇒E⟨ inj₂ (bool ff , s´) ⟩)
---            → ⟨ inj₁ ((if e then S₁ else S₂) , s)
---                ⟩⇒S⟨ inj₁ (S₂ , s´) ⟩
-
---    DEC :   ∀ {x e v L L´ ℰ ℰ´ σ σ´ l}
---            → l ⟨ inj₁ (e , ((ℰ , σ) , L)) ⟩⇒E⟨ inj₂ (v , ((ℰ´ , σ´) , L´)) ⟩
---            → ⟨ inj₁ ((x ← e) , ((ℰ , σ) , ((ℰ , σ) ∷ L))) ⟩⇒S⟨ inj₂ ((ℰ´ , (σ´ [ nxt l ↦ₛ v ])) , L´) ⟩ -- Needs to update in a specific scope
---
---
---    -- Cannot be done till functions are defined
---    -- RET : ∀ {s e} → ⟨ inj₁ ((return e) , s) ⟩⇒S⟨ inj₂ {! evaluated e !} ⟩
---
---    APP :   ∀ {l σ σ´ σ˝ ℰ v v´- e S L L´ L˝} -- the - means it's ignored, like what _ is usually for
---            → l ⟨ inj₁ (e , (ℰ , σ) , L) ⟩⇒E⟨ inj₂ (component v , (ℰ , σ´) , L´) ⟩ -- TODO state in s´ should be able to be acessed from S, unless it's context overwrites it ofc. It's basically dynamic scope inside a static scope :p -- Should the env be the same here in result and input?
---            → ⟨ inj₁ (S , (v , σ´) , L´) ⟩⇒S⟨ inj₂ ((v´- , σ˝) , L˝) ⟩ -- Execute S with the v environment
---            → ⟨ inj₁ ((apply e S) , (ℰ , σ) , L) ⟩⇒S⟨ inj₂ ((ℰ , σ˝) , L˝) ⟩
---
---    CALL :  ∀{f argsExpr varList S s s´ argsListAsStmts} -- f needs to be read from env to get loc, then get val from loc, then see if that val is a function with correct argument count, and make sure it can return something
---            → argsToVars argsExpr varList ≡ just argsListAsStmts
---            → ⟨ inj₁ (argsListAsStmts ⍮ S , s) ⟩⇒S⟨ inj₂ s´ ⟩
---            → ⟨ inj₁ ((f ⟨ argsExpr ⟩ S) , s) ⟩⇒S⟨ inj₂ s´ ⟩
----- TODO assign v´ to be inside env
 
 -- minimum index that is not a number
 minIndexNonInt : ∀ {n} → Vec Expr (suc n) → Maybe (Fin (suc n))
