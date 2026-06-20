@@ -16,9 +16,9 @@ module BoardGame
 --  1.  (a ; (b ; c) ) == ((a ; b) ; c )
 --  2.  Two lists cannot contain the same reference
 
-open import Data.Integer using (ℤ) renaming (+_ to +ℤ_; _+_ to _+ℤ_; _-_ to _-ℤ_; _*_ to _*ℤ_; _<_ to _<ℤ_)
+open import Data.Integer using (ℤ; _≤ᵇ_) renaming (+_ to +ℤ_; _+_ to _+ℤ_; _-_ to _-ℤ_; _*_ to _*ℤ_; _<_ to _<ℤ_)
 open import Data.String using (String) renaming (length to strLen; _==_ to _==ₛₜᵣ_)
-open import Relation.Binary.PropositionalEquality using (_≡_; cong; refl)
+open import Relation.Binary.PropositionalEquality using (_≡_; cong; trans; refl)
 open import Relation.Unary using (Pred; Decidable)
 open import Relation.Nullary using (yes; no)
 open import TransitionSystems using (TransitionSystem; ⌞_,_,_⌟)
@@ -30,18 +30,17 @@ open import Data.Maybe using (Maybe; _>>=_; map; nothing) renaming (just to just
 open import Data.Sum using (_⊎_) renaming (inj₁ to inj₁_; inj₂ to inj₂_)
 open import Data.Product using (_×_; _,_; Σ; ∃; proj₁; proj₂; uncurry)
 open import Data.Nat using (ℕ; suc) renaming (_+_ to _+ℕ_)
-open import Data.List using (_∷_; []; length; lookup; updateAt) renaming (List to ListAny)
+open import Data.List using (_∷_; []; length; lookup; updateAt) renaming (List to ListAny; map to mapL)
 open import Data.Float using (Float) renaming (_≡ᵇ_ to _==ᶠ_)
 open import Data.Fin using (Fin; toℕ; fromℕ; fromℕ<; inject; inject≤)
 open import Data.Vec using (Vec; unzipWith; unzip; toList; fromList)
 open import Function as Func using (_∘_)
 import State as Dict
 open import Data.Nat using (suc; _^_; s<s; z≤n; s≤s; z<s) renaming (_<_ to _<ₙ_; _≤_ to _≤ₙ_; _<?_ to _<?ₙ_; _≡ᵇ_ to _==ₙ_)
-open import Data.Bool using (_∨_)
+open import Data.Bool using (_∨_) renaming (if_then_else_ to ifB_then_else_)
 
 data 𝕍 : Set
 data Stmt : Set
-data NamedArg : Set
 data Expr : Set
 data Member : Set
 
@@ -52,6 +51,8 @@ infixr 6 apply_dø_
 infixr 6 fn_⟨_,_⟩_
 infixr 6 return_
 infixr 6 _←_
+infixr 5 _==_
+
 infixr 6 expr_
 
 infixr 4 _==ᵥ_
@@ -84,7 +85,7 @@ module locNatEquivalence where
     rightInv {ℕ.zero} = refl
     rightInv {suc x} = cong suc rightInv
 
-open locNatEquivalence using (locToNat; locFromNat)
+open locNatEquivalence using (locToNat; locFromNat) public
 
 PosArgDecl = ListAny Var
 
@@ -97,7 +98,7 @@ open Dict 𝕍 ℕ _<ₙ_ _<?ₙ_ _==ₙ_ using (_⊢_==ₛ_) renaming
     ;sortedCons to sortedConsₛ
     ;sortedOne  to sortedOneₛ
     ;joinOverwrite to joinObjOverwrite
-    )
+    ) public
 
 open Dict Loc Var _<ₛ_ _<?ₛ_ _==ₛ_ using () renaming
     (_[_↦_]     to _[_↦ₑ_]
@@ -108,14 +109,21 @@ open Dict Loc Var _<ₛ_ _<?ₛ_ _==ₛ_ using () renaming
     ;sortedCons to sortedConsₑ
     ;sortedOne  to sortedOneₑ
     ;_⊢_==ₛ_    to _⊢_==ₑ_
-    )
+    ) public
 
 open Dict Expr Var _<ₛ_ _<?ₛ_ _==ₛ_ using () renaming
     (State   to Var⇀Expr
     ;_⊢_==ₛ_ to _⊢_==ₑₓ_
-    )
+    ) public
 
 ExprList = ListAny Expr
+
+NamedArg = ListAny (Var × Expr)
+
+module namedArgEquivalence where
+    data NamedArgOriginal : Set where
+        ε : NamedArgOriginal
+        _←O_,O_ : (x : Var) → (e : Expr) → (O : NamedArgOriginal) → NamedArgOriginal
 
 data Int : Set where
     nonNeg_ : Fin (2 ^ 63) → Int
@@ -159,7 +167,7 @@ module StackEquivalence where
 ... | nothing = ψ x 𝒮
 
 PrimFunction = Loc × ℕ × Σ (ListAny Var) Sorted
-UserFunction = Stack × ListAny Var × Σ ℕ (λ m → Vec Var m × Vec Expr m) × Stmt
+UserFunction = Stack × ListAny Var × ListAny (Var × Expr) × Stmt
 
 data Function : Set where
     primFunction : (fₚ : PrimFunction) → Function
@@ -214,11 +222,9 @@ data Expr where
     _[_,_]f_   : (e  : Expr) → (E  : ExprList) → (O : NamedArg) → (S : Stmt) → Expr -- Call
     [_]        : (E  : ExprList) → Expr
     stackframe : (𝒮  : Stack) → (S : Stmt) → Expr
+    member_     : (m  : Member) → Expr
     value_     : (v  : 𝕍) → Expr
 
-data NamedArg where
-    ε : NamedArg
-    _←O_,O_ : (x : Var) → (e : Expr) → (O : NamedArg) → NamedArg
 
 data Member where
     name_ : (x : Var) → Member
@@ -229,18 +235,12 @@ data Member where
 σ∘ℰ_ : {ℰ : Var⇀Loc} → {σ : Store} → Var → Maybe 𝕍
 σ∘ℰ_ {ℰ} {σ} x = lookupₑ ℰ x >>= λ x → lookupₛ σ (locToNat x)
 
-module _
-    (Call : (Loc × ListAny 𝕍 × Σ ℕ (λ m → Vec Var m × Vec 𝕍 m) × Stack × Var⇀Loc) → Maybe (Stack × 𝕍C))
-    where
-    -- TODO
-
-
 Γₑ₁ = Expr × Store × Loc × Stack
-Γₑ₂ = Expr × ListAny Expr × Stack × Store × Loc × Stack
+Γₑ₂ = Expr × NamedArg × Stack × Store × Loc × Stack
 
 data Γₑ : Set where
-    ₑ₁ : Γₑ₁ → Γₑ
-    funcTransitions : Γₑ₂ → Γₑ
+    ₑ₁_ : Γₑ₁ → Γₑ
+    funcTransitions_ : Γₑ₂ → Γₑ
 
 data ⟨_⟩⇒Eₐ⟨_⟩ : Γₑ → Γₑ → Set
 
@@ -255,7 +255,7 @@ data Γₛ : Set where
     ₛ₁_ : Γₛ₁ → Γₛ
     final_ : Γₛ₂ → Γₛ
 
-infix 1 ₛ₁_
+infix 1 ₛ₁_ ₑ₁_ funcTransitions_
 infix 1 final_
 
 data ⟨_⟩⇒Sₐ⟨_⟩ : (IN : Γₛ) → (OUT : Γₛ) → Set
@@ -268,23 +268,32 @@ data ⟨_⟩⇒Sₐ⟨_⟩ : (IN : Γₛ) → (OUT : Γₛ) → Set
 
 data ⟨_⟩⇒M⟨_⟩ : Γₘ → Γₘ → Set
 
+data SimpleOpType : Set where
+    ⊕+ ⊕- ⊕* ⊕/ ⊕% ⊕< ⊕> ⊕<= ⊕>= : SimpleOpType
+
 data OpType : Set where
-    ⊕+ ⊕- ⊕* ⊕/ ⊕% ⊕··= ⊕·· ⊕== ⊕!= ⊕> ⊕< ⊕>= ⊕<= : OpType
+    ⊙⊕ : SimpleOpType → OpType
+    ⊙·· ⊙··= ⊙== ⊙!= ⊙│ ⊙& : OpType
+
+getSimpleOp : SimpleOpType → Expr → Expr → Expr
+getSimpleOp ⊕>   = _>_
+getSimpleOp ⊕<   = _<_
+getSimpleOp ⊕>=  = _>=_
+getSimpleOp ⊕<=  = _<=_
+getSimpleOp ⊕+   = _+_
+getSimpleOp ⊕-   = _-_
+getSimpleOp ⊕*   = _*_
+getSimpleOp ⊕/   = _/_
+getSimpleOp ⊕%   = _%_
 
 getOp : OpType → Expr → Expr → Expr
-getOp ⊕==  = _==_
-getOp ⊕!=  = _!=_
-getOp ⊕>   = _>_
-getOp ⊕<   = _<_
-getOp ⊕>=  = _>=_
-getOp ⊕<=  = _<=_
-getOp ⊕+   = _+_
-getOp ⊕-   = _-_
-getOp ⊕*   = _*_
-getOp ⊕/   = _/_
-getOp ⊕%   = _%_
-getOp ⊕··= = _··=_
-getOp ⊕··  = _··_
+getOp (⊙⊕ x) = getSimpleOp x
+getOp ⊙·· = _··_
+getOp ⊙··= = _··=_
+getOp ⊙== = _==_
+getOp ⊙!= = _!=_
+getOp ⊙│ = _│_
+getOp ⊙& = _&_
 
 _==ᵢ_ : Int → Int → Bool
 nonNeg x₁ ==ᵢ nonNeg x₂ = toℕ x₁ ==ₙ toℕ x₂
@@ -316,53 +325,296 @@ ref _    𝕍== _ = bool ff
 func userFunction _ 𝕍== _ = bool ff
 func primFunction _ 𝕍== _ = bool ff
 
+IntToℤ_ : Int → ℤ
+IntToℤ (nonNeg x) = +ℤ toℕ x
+IntToℤ -⟨ x +1⟩ = ℤ.negsuc (toℕ x)
+
+ℤToMaybeInt_ : ℤ → Maybe Int
+ℤToMaybeInt +ℤ_ n with n Data.Nat.<? (2 ^ 63)
+... | yes p = just nonNeg fromℕ< p
+... | no p = nothing
+ℤToMaybeInt ℤ.negsuc n with n Data.Nat.<? (2 ^ 63)
+... | yes p = just -⟨ fromℕ< p +1⟩
+... | no p = nothing
+
 -- TODO
---_[_]ₐ_ : 𝕍 → OpType → 𝕍 → 𝕍
---x₁ [ ⊕==  ]ₐ x₂ = x₁ 𝕍== x₂
---x₁ [ ⊕!=  ]ₐ x₂ = x₁
---x₁ [ ⊕>   ]ₐ x₂ = x₁
---x₁ [ ⊕<   ]ₐ x₂ = x₁
---x₁ [ ⊕>=  ]ₐ x₂ = x₁
---x₁ [ ⊕<=  ]ₐ x₂ = x₁
---x₁ [ ⊕+   ]ₐ x₂ = x₁
---x₁ [ ⊕-   ]ₐ x₂ = x₁
---x₁ [ ⊕*   ]ₐ x₂ = x₁
---x₁ [ ⊕/   ]ₐ x₂ = x₁
---x₁ [ ⊕%   ]ₐ x₂ = x₁
---x₁ [ ⊕··= ]ₐ x₂ = x₁
---x₁ [ ⊕··  ]ₐ x₂ = x₁
+_ₐ : SimpleOpType → 𝕍 → 𝕍 → Maybe 𝕍
+--_ₐ op  (float x) (int y) = _ₐ op (float x) (float (Data.Float.fromℤ (IntToℤ y)))
+--_ₐ op  (int x) (float y) = _ₐ op (float (Data.Float.fromℤ (IntToℤ x))) (float y)
+_ₐ ⊕>  (int x) (int y) = just bool (((+ℤ 1) +ℤ IntToℤ y) ≤ᵇ IntToℤ x)
+_ₐ ⊕<  (int x) (int y) = just bool ((((+ℤ 1) +ℤ IntToℤ x) ≤ᵇ IntToℤ y))
+_ₐ ⊕>= (int x) (int y) = just bool (IntToℤ y ≤ᵇ IntToℤ x)
+_ₐ ⊕<= (int x) (int y) = just bool (IntToℤ x ≤ᵇ IntToℤ y)
+_ₐ ⊕+  (int x) (int y) = ℤToMaybeInt (IntToℤ x +ℤ IntToℤ y) >>= just_ ∘ int_
+_ₐ ⊕-  (int x) (int y) = ℤToMaybeInt (IntToℤ x -ℤ IntToℤ y) >>= just_ ∘ int_
+_ₐ ⊕*  (int x) (int y) = ℤToMaybeInt (IntToℤ x *ℤ IntToℤ y) >>= just_ ∘ int_
+_ₐ ⊕/  (int x) (int y) with IntToℤ y Data.Integer.≟ +ℤ 0
+... | yes _ = nothing
+... | no p = ℤToMaybeInt (Data.Integer._/_ (IntToℤ x) (IntToℤ y) {{Data.Integer.≢-nonZero p}}) >>= just_ ∘ int_
+_ₐ ⊕%  (int x) (int y) with IntToℤ y Data.Integer.≟ +ℤ 0
+... | yes _ = nothing
+... | no p = ℤToMaybeInt (+ℤ (Data.Integer._%_ (IntToℤ x) (IntToℤ y) {{Data.Integer.≢-nonZero p}})) >>= just_ ∘ int_
+_ₐ ⊕>  (float x) (float y) = just bool (y Data.Float.<ᵇ x)
+_ₐ ⊕<  (float x) (float y) = just bool (x Data.Float.<ᵇ y)
+_ₐ ⊕>= (float x) (float y) = just bool (y Data.Float.≤ᵇ x)
+_ₐ ⊕<= (float x) (float y) = just bool (x Data.Float.≤ᵇ y)
+_ₐ ⊕+  (float x) (float y) = just float (x Data.Float.+ y)
+_ₐ ⊕-  (float x) (float y) = just float (x Data.Float.- y)
+_ₐ ⊕*  (float x) (float y) = just float (x Data.Float.* y)
+_ₐ ⊕/  (float x) (float y) = just float (x Data.Float.÷ y)
+_ₐ ⊕%  (float x) (float y) = (Data.Float.⌊ x Data.Float.÷ y ⌋) >>= λ z → just float (x Data.Float.- (Data.Float.fromℤ z) Data.Float.* y)
+_ₐ _ _ _ = nothing
 
 variable
-    e e´ e˝ e₁ e₁´ e₂ eᵢ eᵢ´ : Expr
+    e e´ e˝ e₁ e₁´ e₂ e₂´ eᵢ eᵢ´ eᵢ˝ : Expr
     S S´ S₁ S₁´ S₂ S₂´ : Stmt
     m m´ : Member
     σ σ´ σ˝ : Store
-    l l´ l˝ L : Loc
+    l l´ l˝ L Lᶠ : Loc
     ℰ ℰ´ : Var⇀Loc
     𝒮 𝒮´ 𝒮˝ 𝒮ₛ : Stack
     x N : Var
     xₙ : PosArgDecl
-    v : 𝕍
-    xₒ=eₒ : NamedArg
+    v v₁ v₂ : 𝕍
+    xₒ=eₒ O : NamedArg
     E E´ : ExprList
+    B : Bool
+    f f₁ f₂ : Float
+    fₚ :  PrimFunction
+    fᵤ : UserFunction
+
+_<ᵇI_ : Int → Int → Bool
+(nonNeg i₁) <ᵇI (nonNeg i₂) = (toℕ i₁) Data.Nat.<ᵇ (toℕ i₂)
+(nonNeg i₁) <ᵇI -⟨ i₂ +1⟩ = Bool.false
+-⟨ i₁ +1⟩ <ᵇI (nonNeg i₂) = Bool.true
+-⟨ i₁ +1⟩ <ᵇI -⟨ i₂ +1⟩ = (toℕ i₂) Data.Nat.<ᵇ (toℕ i₁)
+
+minIndexNonValue : ∀ {n} → Vec Expr (suc n) → Maybe (Fin (suc n))
+minIndexNonValue {ℕ.zero} ((value x) Vec.∷ Vec.[]) = nothing
+minIndexNonValue {suc n} ((value x) Vec.∷ x₁) = map Fin.suc (minIndexNonValue x₁)
+minIndexNonValue (x Vec.∷ y) = just Fin.zero
+
+exprToLoc : Expr → Maybe Loc
+exprToLoc (value ref v) = just v
+exprToLoc x = nothing
+
+transfer : {n m : ℕ} → n ≡ m → Vec Loc n → Vec Loc m
+transfer refl x = x
+
+cap0 : ℤ → ℕ
+cap0 (+ℤ_ n) = n
+cap0 (ℤ.negsuc n) = 0
+
+append : {A : Set} → ListAny A → A → ListAny A
+append [] a = a ∷ []
+append (aᵢ ∷ as) a = aᵢ ∷ (append as a)
+
+𝕍CTo𝕍 : 𝕍C → 𝕍
+𝕍CTo𝕍 (refC l) = ref l
+𝕍CTo𝕍 (boolC b) = bool b
+𝕍CTo𝕍 (intC i) = int i
+𝕍CTo𝕍 (floatC F) = float F
+𝕍CTo𝕍 (strC s) = str s
 
 data ⟨_⟩⇒Eₐ⟨_⟩ where
---    OP :    ∀ {v₁ v₂ σ l 𝒮}
---            → (⊕ : OpType)
---            → ⟨(inj₁ ((getOp ⊕) (inj₂ v₁) (inj₂ v₂))) , σ , l , 𝒮 ⟩⇒E⟨ (inj₂ (v₁ [ ⊕ ]ₐ v₂)) , σ , l , 𝒮 ⟩
+    -- TODO OP
+    OP-1 :  (⊙ : OpType) →
+            ⟨ e₁ , σ , l , 𝒮 ⟩⇒E⟨ e₁´ , σ´ , l´ , 𝒮´ ⟩ →
+            ⟨ getOp ⊙ e₁ e₂ , σ , l , 𝒮 ⟩⇒E⟨ getOp ⊙ e₁´ e₂ , σ´ , l´ , 𝒮´ ⟩
 
-split : NamedArg → (Σ ℕ λ n → Vec Var n × Vec Expr n)
-split ε = 0 , Vec.[] , Vec.[]
-split (n ←O e ,O x₁) with split x₁
-... | l , names , exprs = suc l , n Vec.∷ names , e Vec.∷ exprs
+    OP-2 :  (⊙ : OpType) →
+            ⟨ e₂ , σ , l , 𝒮 ⟩⇒E⟨ e₂´ , σ´ , l´ , 𝒮´ ⟩ →
+            ⟨ getOp ⊙ (value v₁) e₂ , σ , l , 𝒮 ⟩⇒E⟨ getOp ⊙ (value v₁) e₂´ , σ´ , l´ , 𝒮´ ⟩
+
+    SIMPLE-OP : (⊕ : SimpleOpType) →
+                _ₐ ⊕ v₁ v₂ ≡ just v →
+                ⟨ getSimpleOp ⊕ (value v₁) (value v₂) , σ , l , 𝒮 ⟩⇒E⟨ (value v) , σ´ , l´ , 𝒮´ ⟩
+
+    RANGE : ∀ {i₁ i₂}
+            → (p : (cap0 ((IntToℤ i₂) -ℤ (IntToℤ i₁))) ≤ₙ 2 ^ 63)
+            → ⟨ (value int i₁) ·· (value int i₂) , σ , l , 𝒮 ⟩⇒E⟨ [ Data.List.tabulate {A = Expr} {n = cap0 ((IntToℤ i₂) -ℤ (IntToℤ i₁))} (λ x → (value int i₁) + (value (int (nonNeg (inject≤ x p))))) ] , σ , l , 𝒮 ⟩
+
+    RANGE-INCL : ∀ {i₁ i₂}
+            → (p : (cap0 ((+ℤ 1) +ℤ ((IntToℤ i₂) -ℤ (IntToℤ i₁)))) ≤ₙ 2 ^ 63)
+            → ⟨ (value int i₁) ··= (value int i₂) , σ , l , 𝒮 ⟩⇒E⟨ [ Data.List.tabulate {A = Expr} {n = (cap0 ((+ℤ 1) +ℤ ((IntToℤ i₂) -ℤ (IntToℤ i₁))))} (λ x → (value int i₁) + (value (int (nonNeg (inject≤ x p))))) ] , σ , l , 𝒮 ⟩
 
 
---locsToObject : Store → ListAny Loc → Maybe (ListAny Store)
---locsToObject _ [] = just []
---locsToObject σ (L ∷ locs) with lookupₛ σ (locToNat L)
---... | just obj x = map ({! x !} ∷_) (locsToObject σ locs)
---... | _ = {!   !}
+    EQ-BOOL-TRUE :         ⟨ (value bool B) == (value bool B) , σ , l , 𝒮 ⟩⇒E⟨ value bool tt , σ , l , 𝒮 ⟩
+    EQ-REF-TRUE  :         ⟨ (value ref  L) == (value ref  L) , σ , l , 𝒮 ⟩⇒E⟨ value bool tt , σ , l , 𝒮 ⟩
+    EQ-INT-TRUE  : ∀ {i} → ⟨ (value int  i) == (value int  i) , σ , l , 𝒮 ⟩⇒E⟨ value bool tt , σ , l , 𝒮 ⟩
+    EQ-STR-TRUE  : ∀ {s} → ⟨ (value str  s) == (value str  s) , σ , l , 𝒮 ⟩⇒E⟨ value bool tt , σ , l , 𝒮 ⟩
 
+    EQ-FLOAT-1 : ⟨ (value float f₁) == (value float f₂) , σ , l , 𝒮 ⟩⇒E⟨ value bool (f₁ ==ᶠ f₂) , σ , l , 𝒮 ⟩
+
+    EQ-BOOL-FALSE :          (¬ bool  B ≡ v) → ⟨ (value bool  B) == (value v) , σ , l , 𝒮 ⟩⇒E⟨ value bool ff , σ , l , 𝒮 ⟩
+    EQ-REF-FALSE  :          (¬ ref   L ≡ v) → ⟨ (value ref   L) == (value v) , σ , l , 𝒮 ⟩⇒E⟨ value bool ff , σ , l , 𝒮 ⟩
+    EQ-INT-FALSE  : ∀ {i} →  (¬ int   i ≡ v) → ⟨ (value int   i) == (value v) , σ , l , 𝒮 ⟩⇒E⟨ value bool ff , σ , l , 𝒮 ⟩
+    EQ-STR-FALSE  : ∀ {s} →  (¬ str   s ≡ v) → ⟨ (value str   s) == (value v) , σ , l , 𝒮 ⟩⇒E⟨ value bool ff , σ , l , 𝒮 ⟩
+    EQ-FLOAT-2    :          (¬ ∃ λ f₂ → float f₂ ≡ v) → ⟨ (value float f) == (value v) , σ , l , 𝒮 ⟩⇒E⟨ value bool ff , σ , l , 𝒮 ⟩
+
+    NOT-EQ : ⟨ (value v₁) != (value v₂) , σ , l , 𝒮 ⟩⇒E⟨ (((value v₁) == (value v₂)) == (value bool ff)) , σ , l , 𝒮 ⟩
+
+    CALL :  ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
+            ⟨ e´ , σ´ , l´ , 𝒮´ ⟩⇒E⟨ e˝ , σ˝ , l˝ , 𝒮˝ ⟩ →
+            ⟨ e [ E , O ]f S , σ , l , 𝒮 ⟩⇒E⟨ e´ [ E , O ]f S , σ´ , l´ , 𝒮´ ⟩
+
+    CALL-PRIM-1 :   ∀ {n Lf args}
+                    → length E ≡ n
+                    → lookupₛ σ (locToNat L) ≡ just func primFunction (Lf , n , args)
+                    → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ value ref L , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ e [ E , O ]f S , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ E , O ]f S , σ´ , l´ , Æ ∷ 𝒮´ ⟩
+
+    CALL-PRIM-2 :   ∀ {n args index}
+                    → (∀ i → ∃ λ v → lookup (Data.List.take (toℕ index) E) i ≡ value v)
+                    → lookupₛ σ (locToNat L) ≡ just func primFunction (Lᶠ , n , args)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup (proj₁ args) j)
+                    → ⟨ lookup E index , σ , l , 𝒮 ⟩⇒E⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ (value ref L) [ E , O ]f S , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ updateAt E index (λ _ → eᵢ´) , O ]f S , σ´ , l´ , 𝒮´ ⟩
+
+    CALL-PRIM-3 :   ∀ {n args index}
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup (Data.List.take (toℕ index) O) i .proj₂ ≡ value v)
+                    → lookupₛ σ (locToNat L) ≡ just func primFunction (Lᶠ , n , args)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup (proj₁ args) j)
+                    → ⟨ (lookup O index) .proj₂ , σ , l , 𝒮 ⟩⇒E⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ (value ref L) [ E , O ]f S , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ E , updateAt O index ((_, eᵢ´) ∘ proj₁) ]f S , σ´ , l´ , 𝒮´ ⟩
+
+    CALL-PRIM-4 :   ∀ {n args}
+                    → lookupₛ σ (locToNat L) ≡ just func primFunction (Lᶠ , n , args)
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup (proj₁ args) j)
+                    → ⟨ S , σ , l , 𝒮 ⟩⇒S⟨ S´ , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ (value ref L) [ E , O ]f S , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ E , O ]f S´ , σ , l , 𝒮 ⟩
+
+    CALL-PRIM-5 :   ∀ {n args vC}
+                    → lookupₛ σ (locToNat L) ≡ just func primFunction (Lᶠ , n , args)
+                    → (argsAreValues : ∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (namedArgsAreValues : ∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup (proj₁ args) j)
+                    → ⟨ ₛ₁ S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , ℰ´ ∷ 𝒮´ ⟩
+                    → (Call : Loc → ListAny 𝕍 → ListAny (Var × 𝕍) → Store → Var⇀Loc → Maybe (Store × 𝕍C))
+                    → Call Lᶠ (Data.List.tabulate (proj₁ ∘ argsAreValues)) (Data.List.tabulate (λ i → lookup O i .proj₁ , namedArgsAreValues i .proj₁)) σ´ ℰ´ ≡ (just (σ˝ , vC))
+                    → ⟨ (value ref L) [ E , O ]f S , σ , l , 𝒮 ⟩⇒E⟨ value 𝕍CTo𝕍 vC , σ˝ , l , 𝒮 ⟩
+
+    CALL-USER-1 :   ∀ {args namedArgs}
+                    → length E ≡ length args
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ value ref L , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ e [ E , O ]f skip , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ E , O ]f skip , σ´ , l´ , 𝒮´ ⟩
+
+    CALL-USER-2 :   ∀ {args index namedArgs}
+                    → length E ≡ length args
+                    → (∀ i → ∃ λ v → lookup (Data.List.take (toℕ index) E) i ≡ value v)
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → ⟨ lookup E index , σ , l , 𝒮 ⟩⇒E⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ (value ref L) [ E , O ]f skip , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ updateAt E index (λ _ → eᵢ´) , O ]f skip , σ´ , l´ , 𝒮´ ⟩
+
+    CALL-USER-3 :   ∀ {args index namedArgs}
+                    → length E ≡ length args
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup (Data.List.take (toℕ index) O) i .proj₂ ≡ value v)
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → ⟨ lookup O index .proj₂ , σ , l , 𝒮 ⟩⇒E⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ (value ref L) [ E , O ]f skip , σ , l , 𝒮 ⟩⇒E⟨ (value ref L) [ E , updateAt O index ((_, eᵢ´) ∘ proj₁) ]f skip , σ´ , l´ , 𝒮´ ⟩
+
+    CALL-USER-4 :   ∀ {args namedArgs}
+                    → length E ≡ length args
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → ⟨ ₑ₁ (value ref L) [ E , O ]f skip , σ , l , 𝒮 ⟩⇒Eₐ⟨ funcTransitions (value ref L) [ E , O ]f skip , namedArgs , 𝒮ₛ , σ , l , 𝒮 ⟩
+
+    CALL-USER-5 :   ∀ {args index namedArgs}
+                    → length E ≡ length args
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → (¬ ∃ λ i → lookup O i .proj₁ ≡ x)
+                    → ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩
+                    → ⟨ funcTransitions (value ref L) [ E , O ]f skip , (x , e) ∷ Data.List.drop index namedArgs , 𝒮ₛ , σ , l , 𝒮 ⟩⇒Eₐ⟨ funcTransitions (value ref L) [ E , O ]f skip , (x , e´) ∷ Data.List.drop index namedArgs , 𝒮ₛ , σ , l , 𝒮 ⟩
+
+    CALL-USER-6 :   ∀ {args namedArgs index}
+                    → length E ≡ length args
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → (¬ ∃ λ i → lookup O i .proj₁ ≡ x)
+                    → ⟨       funcTransitions (value ref L) [ E ,        O               ]f skip , (x , value v) ∷ Data.List.drop index namedArgs , 𝒮ₛ , σ , l , 𝒮
+                        ⟩⇒Eₐ⟨ funcTransitions (value ref L) [ E , append O (x , value v) ]f skip ,                 Data.List.drop index namedArgs , 𝒮ₛ , σ , l , 𝒮 ⟩
+
+    CALL-USER-7 :   ∀ {args namedArgs index}
+                    → length E ≡ length args
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ i → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → (∃ λ i → lookup O i .proj₁ ≡ x)
+                    → ⟨       funcTransitions (value ref L) [ E , O ]f skip , (x , value v) ∷ Data.List.drop index namedArgs , 𝒮ₛ , σ , l , 𝒮
+                        ⟩⇒Eₐ⟨ funcTransitions (value ref L) [ E , O ]f skip ,                 Data.List.drop index namedArgs , 𝒮ₛ , σ , l , 𝒮 ⟩
+
+    CALL-USER-8 :   ∀ {args namedArgs}
+                    → length E ≡ length args
+                    → lookupₛ σ (locToNat L) ≡ just func userFunction (𝒮ₛ , args , namedArgs , S )
+                    → (∀ i → ∃ λ v → lookup E i ≡ value v)
+                    → (valuesOfObjs : ∀ i → ∃ λ v → lookup O i .proj₂ ≡ value v)
+                    → (∀ (i : Fin (length O)) → ∃ λ j → lookup O i .proj₁ ≡ lookup namedArgs j .proj₁)
+                    → ⟨ funcTransitions (value ref L) [ E , O ]f skip , [] , 𝒮ₛ , σ , l , 𝒮
+                        ⟩⇒Eₐ⟨ ₑ₁ stackframe 𝒮 S ,
+                            Data.List.foldl (uncurry ∘ _[_↦ₛ_]) σ
+                                (Data.List.zip (
+                                    Data.List.applyUpTo
+                                        (_+ℕ locToNat l)
+                                        (length O)
+                                ) (Data.List.tabulate
+                                    (proj₁ ∘ valuesOfObjs)
+                                )) ,
+                            locFromNat (length O +ℕ locToNat l) ,
+                            Data.List.foldl (uncurry ∘ _[_↦ₑ_]) Æ
+                                (Data.List.zip (mapL proj₁ O) (
+                                    Data.List.applyUpTo
+                                        (locFromNat ∘ (_+ℕ locToNat l))
+                                        (length O)
+                                ))
+                            ∷ 𝒮ₛ ⟩
+
+    STACKFRAME-1 :  ⟨ S , σ , l , 𝒮 ⟩⇒S⟨ S´ , σ´ , l´ , 𝒮´ ⟩ →
+                    ⟨ stackframe 𝒮ₛ S , σ , l , 𝒮 ⟩⇒E⟨ stackframe 𝒮ₛ S´ , σ´ , l´ , 𝒮´ ⟩
+
+    STACKFRAME-2 :  ⟨ ₛ₁ S , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ´ , l´ , 𝒮´ ⟩ →
+                    ⟨ stackframe 𝒮ₛ S , σ , l , 𝒮 ⟩⇒E⟨ stackframe 𝒮ₛ return· , σ´ , l´ , 𝒮´ ⟩
+
+    STACKFRAME-3 : ⟨ stackframe 𝒮ₛ (return value v) , σ , l , 𝒮 ⟩⇒E⟨ value v , σ , l , 𝒮ₛ ⟩
+
+    List-1 :    ∀ {indexOfExpr}
+                → minIndexNonValue (fromList (e ∷ E)) ≡ just indexOfExpr
+                → ⟨ lookup (e ∷ E) indexOfExpr , σ  , l  , 𝒮  ⟩⇒E⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩
+                → ⟨ eᵢ´ , σ´ , l´ , 𝒮´ ⟩⇒E⟨ eᵢ˝ , σ˝ , l˝ , 𝒮˝ ⟩
+                → ⟨ [ e ∷ E ] , σ , l , 𝒮 ⟩⇒E⟨ [ updateAt (e ∷ E) indexOfExpr (λ _ → eᵢ´) ] , σ´ , l´ , 𝒮´ ⟩
+
+    List-2 :    ∀ {indexOfExpr}
+                → minIndexNonValue (fromList (e ∷ E)) ≡ just indexOfExpr
+                → ⟨ lookup (e ∷ E) indexOfExpr , σ  , l  , 𝒮  ⟩⇒E⟨ value v , σ´ , l´ , 𝒮´ ⟩
+                → ⟨ [ e ∷ E ] , σ , l , 𝒮 ⟩⇒E⟨ [ updateAt (e ∷ E) indexOfExpr (λ _ → value ref l´) ] , σ´ [ locToNat l´ ↦ₛ v ] , nxt l´ , 𝒮´ ⟩
+
+    List-3 :    ∀ {n locs} --hasLocOnly E
+                → (length E) <ₙ (2 ^ 63)
+                → length E ≡ toℕ n
+                → (p : length locs ≡ toℕ n) -- TODO you could infer this instead of taking it as an assumption
+                → (Data.List.foldl (λ x → _>>= (λ y → map (y ∷_) x)) (just []) (mapL exprToLoc E)) ≡ just locs
+                → ⟨ [ E ] , σ , l , 𝒮 ⟩⇒E⟨ value ref l , σ [ locToNat l ↦ₛ list_ {n} (transfer p (fromList locs)) ] , nxt l , 𝒮 ⟩
+
+    MEMBER-EXPR-1 : ⟨ m , σ , l , 𝒮 ⟩⇒M⟨ m´ , σ´ , l´ , 𝒮´ ⟩ →
+                    ⟨ member m , σ , l , 𝒮 ⟩⇒E⟨ member m´ , σ´ , l´ , 𝒮´ ⟩
+
+    MEMBER-EXPR-2 : lookupₛ σ (locToNat L) ≡ just v →
+                    ⟨ member locM L , σ , l , 𝒮 ⟩⇒E⟨ value v , σ , l , 𝒮 ⟩
 
 breakEnv : Var⇀Loc → Σ ℕ (λ n → Vec Var n × Vec Loc n)
 breakEnv (fst , _) = length fst , unzip (fromList fst)
@@ -378,7 +630,7 @@ data ⟨_⟩⇒Sₐ⟨_⟩ where
 
     FN-DECL :   ⟨ ₛ₁ fn x ⟨ xₙ , xₒ=eₒ ⟩ S , σ , l , ℰ ∷ 𝒮 ⟩⇒Sₐ⟨
                     final σ [ locToNat l ↦ₛ ref nxt l ] [
-                        locToNat (nxt l) ↦ₛ func (userFunction (ℰ [ x ↦ₑ l ] ∷ 𝒮 , xₙ , split xₒ=eₒ , S))
+                        locToNat (nxt l) ↦ₛ func (userFunction (ℰ [ x ↦ₑ l ] ∷ 𝒮 , xₙ , xₒ=eₒ , S))
                     ] , nxt nxt l , ℰ [ x ↦ₑ l ] ∷ 𝒮
                 ⟩
 
@@ -518,53 +770,5 @@ data ⟨_⟩⇒M⟨_⟩ where
                 → lookupₑ O x ≡ just L
                 → ⟨ (value (ref L)) deref x , σ , l , 𝒮 ⟩⇒M⟨ locM L , σ , l , 𝒮 ⟩
 
-
--- Examples
-
-module example-1 where
-
---    one two three : ST₁
---    one = while inj₁ ((inj₂(bool ff)) == (inj₂(bool ff))) dø ⟨ (inj₁ (name "x")) ← (inj₂ (bool tt)) ⟩ ⍮ skip , emptyStore , 0 , emptyEnv ∷ []
---    two = if inj₁ ((inj₂(bool ff)) == (inj₂(bool ff))) then (while inj₁ ((inj₂(bool ff)) == (inj₂(bool ff))) dø ⟨ ((inj₁ (name "x")) ← (inj₂ (bool tt))) ⟩) else skip ⍮ skip , emptyStore , 0 , emptyEnv ∷ []
---    three = if inj₂ (bool tt) then (while inj₁ ((inj₂(bool ff)) == (inj₂(bool ff))) dø ⟨ ((inj₁ (name "x")) ← (inj₂ (bool tt))) ⟩) else skip ⍮ skip , emptyStore , 0 , emptyEnv ∷ []
---    step0 : ⟨ one ⟩⇒S⟨ two  ⟩
---    step0 = COMP-S1 WHILE
-
---    step1 : ⟨ two ⟩⇒S⟨ three ⟩
---    step1 = COMP-S1 (IF-E (OP ⊕==))
-
---    step1 : ⟨ p1 , emptyStore , 0 , [] ⟩⇒S⟨ if inj₁ ((b ff) == (b ff)) then (while inj₁ ((b ff) == (b ff)) dø ⟨ ((inj₁ (last "x")) ← (inj₂ (bool tt))) ⟩) else skip ⍮ skip , emptyStore , 0 , [] ⟩
---    step0 = COMP-S1 WHILE
-
-
-    --case-study : (Stmt × State) ⊎ State
-    --case-study = inj₁ ((
-    --        "x" ← (i (+ℤ 1)) ⍮
-    --        "y" ← (i (+ℤ 2)) ⍮
-    --        fn "f" ⟨ [] ⟩ (
-    --            "x" ← (i (+ℤ 5)) ⍮
-    --            "y" ↩ (X ("x" , []))
-    --        ) ⍮
-    --        (("f" ∷ []) ⟨ [] ⟩ skip) ⍮
-    --        ("x" ↩ ((X ("x" , [])) + (X ("y" , [])))) ⍮
-    --        skip
-    --    ) , ((([] , sortedNilₑ) , ([] , sortedNilₛ)) , []))
-
-    --case-study-result : (Stmt × State) ⊎ State
-    --case-study-result =
-    --    inj₂ ((
-    --        ((("x" , 0) ∷ ("y" , 1) ∷ ("f" , 2) ∷ []) , {!   !}) ,
-    --        ((0 , int (+ℤ 6)) ∷ {!   !} ∷ {!   !}) , {!   !}
-    --    ), [])
-    --    6
-
-    --ℰ : Var⇀Loc
-    --ℰ "x" = just (loc 0)
-    --ℰ "y" = just (loc 1)
-    --ℰ "z" = just (loc 1)
-    --ℰ x = nothing
-
-    --σ : Sto
-    --σ (loc 0) = just (int (+ℤ 5))
-    --σ (loc 1) = just (int (+ℤ 2))
-    --σ x = nothing
+    VAR :   ψ x 𝒮 ≡ just L →
+            ⟨ name x , σ , l , 𝒮 ⟩⇒M⟨ locM L , σ , l , 𝒮 ⟩
