@@ -18,7 +18,9 @@ The official non-Agda semantics of the Pawn programming language is not public, 
 6. CALL-USER-8 wrongly adds values to a environment instead of locations.
 7. The abstract syntax is missing a rule to handle Member in expressions. This would handle indexing, variable lookup, etc, which are impossible in the semantic's current (non-Agda) state.
 
-Minor:
+All these mistakes have been fixed in the Agda version.
+
+### Minor
 8. Store instead of Sto in 2 places.
 9. Function calls in statements have to not return anything. It's because there's a missing EXPR-STMT rule for escaping a scope that uses `return v` to escape.
 10. INDEX-4 used `a` instead of `L` in a list-expansion
@@ -27,4 +29,4 @@ Minor:
 13. CALL-USER-5 (and some other call rules) don't allow expressions to modify the function that's being called. Modifying it isn't possible with any syntax, but impl defined funcs could.
 14. The implementation defined Call function shouldn't be allowed to modify *all* state. Ideally it would be given a function to allocate space that it could itself use, and it'd be able to modify any locations it'd be the maker of.
 
-All non-minor mistakes have been fixed in the Agda version. I do not plan on fixing the minor ones, but some are already solved.
+All minor mistakes have been fixed in the Agda version.
