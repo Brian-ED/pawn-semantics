@@ -691,6 +691,8 @@ data ⟨_⟩⇒Sₐ⟨_⟩ where
 
     EXPR-STMT-3 : ⟨ ₛ₁ expr stackframe 𝒮ₛ return· , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ , l , 𝒮ₛ ⟩
 
+    EXPR-STMT-4 : ⟨ ₛ₁ expr stackframe 𝒮ₛ return v , σ , l , 𝒮 ⟩⇒Sₐ⟨ final σ , l , 𝒮ₛ ⟩
+
     APPLY-1 :   ⟨ e , σ , l , 𝒮 ⟩⇒E⟨ e´ , σ´ , l´ , 𝒮´ ⟩ →
                 ⟨ e´ , σ´ , l´ , 𝒮´ ⟩⇒E⟨ e˝ , σ˝ , l˝ , 𝒮˝ ⟩ →
                 ⟨ apply e dø S , σ , l , 𝒮 ⟩⇒S⟨ apply e´ dø S , σ´ , l´ , 𝒮´ ⟩
