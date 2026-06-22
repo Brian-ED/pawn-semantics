@@ -17,8 +17,9 @@ The official non-Agda semantics of the Pawn programming language is not public, 
 5. Phi is called as the lookup function in \[VAR\] instead of ψ
 6. CALL-USER-8 wrongly adds values to a environment instead of locations.
 7. The abstract syntax is missing a rule to handle Member in expressions. This would handle indexing, variable lookup, etc, which are impossible in the semantic's current (non-Agda) state.
+8. Missing rules for "&" and "|". Should be moved to simpleOp or have rules assigned.
 
-All these mistakes have been fixed in the Agda version.
+All these mistakes have been fixed in the Agda version, except for misatke 8.
 
 ### Minor
 8. Store instead of Sto in 2 places.
